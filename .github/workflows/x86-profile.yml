@@ -1,0 +1,41 @@
+# Not for upstream: profiles swift-iouring-akbashev against rust-iouring-kensac on an x86 runner (io_uring works
+# there; it doesn't under Rosetta), each on one CPU under the same mload load.
+name: x86 profile
+on:
+  push:
+    branches: [x86-profile]
+  workflow_dispatch:
+permissions:
+  contents: read
+
+jobs:
+  profile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: '1.27.1', cache: false }
+      - name: machine
+        run: lscpu | grep -E 'Model name|^CPU\(s\)|Thread|MHz|Flags' | cut -c1-300; uname -r; free -m
+      - name: tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq sqlite3 jq curl openssl linux-tools-common "linux-tools-$(uname -r)" \
+            || sudo apt-get install -y -qq linux-tools-generic
+      - name: seed
+        run: bash seed/make-seed.sh
+      - name: install
+        run: |
+          sudo bash submissions/swift-iouring-akbashev/install.sh > /tmp/install-swift.log 2>&1 || { tail -20 /tmp/install-swift.log; exit 1; }
+          sudo bash submissions/rust-iouring-kensac/install.sh > /tmp/install-rust.log 2>&1 || { tail -20 /tmp/install-rust.log; exit 1; }
+      - name: build
+        run: |
+          bash submissions/swift-iouring-akbashev/build.sh 2>&1 | tail -3
+          bash submissions/rust-iouring-kensac/build.sh 2>&1 | tail -3
+          (cd profile/mload && go build -o mload .)
+      - name: profile
+        run: bash profile/run.sh swift-iouring-akbashev rust-iouring-kensac swift-iouring-akbashev rust-iouring-kensac
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: profile, path: profile/out, retention-days: 7 }
