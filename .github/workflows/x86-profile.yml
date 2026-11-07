@@ -11,7 +11,7 @@ permissions:
 jobs:
   profile:
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -35,6 +35,8 @@ jobs:
           bash submissions/rust-iouring-kensac/build.sh 2>&1 | tail -3
           (cd profile/mload && go build -o mload .)
       - name: profile
+        # The box's shape: 200,000 users on four loopback addresses, the servers at 65,535 descriptors (four rings).
+        env: { USERS: '200000', TARGETS: '127.0.0.1,127.0.0.2,127.0.0.3,127.0.0.4', THINK: '0.6', RAMP: '60', HOLD: '110', WINDOW: '25', PERF: '15' }
         run: bash profile/run.sh swift-iouring-akbashev rust-iouring-kensac swift-iouring-akbashev rust-iouring-kensac
       - uses: actions/upload-artifact@v4
         if: always()
