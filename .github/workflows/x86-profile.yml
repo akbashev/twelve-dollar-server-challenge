@@ -1,0 +1,50 @@
+# Not for upstream: swift-iouring-akbashev (now, and as #297 had it) against rust-iouring-kensac on x86 runners, each
+# on one CPU in its own cgroup under the same mload load: CPU per request, perf by function, allocations, memory.
+name: x86 profile
+on:
+  push:
+    branches: [x86-profile-2]
+  workflow_dispatch:
+permissions:
+  contents: read
+
+jobs:
+  profile:
+    strategy:
+      fail-fast: false
+      matrix:
+        run: [1, 2]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: '1.27.1', cache: false }
+      - name: machine
+        run: lscpu | grep -E 'Model name|^CPU\(s\)|Thread|MHz|Flags' | cut -c1-300; uname -r; free -m
+      - name: tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq sqlite3 jq curl openssl linux-tools-common "linux-tools-$(uname -r)" \
+            || sudo apt-get install -y -qq linux-tools-generic
+      - name: seed
+        run: bash seed/make-seed.sh
+      - name: install
+        run: |
+          sudo bash submissions/swift-iouring-akbashev/install.sh > /tmp/install-swift.log 2>&1 || { tail -20 /tmp/install-swift.log; exit 1; }
+          sudo bash submissions/rust-iouring-kensac/install.sh > /tmp/install-rust.log 2>&1 || { tail -20 /tmp/install-rust.log; exit 1; }
+      - name: build
+        run: |
+          bash submissions/swift-iouring-akbashev/build.sh 2>&1 | tail -3
+          bash submissions/swift-iouring-akbashev-297/build.sh 2>&1 | tail -3
+          bash submissions/rust-iouring-kensac/build.sh 2>&1 | tail -3
+          (cd profile/mload && go build -o mload .)
+      - name: rate (40,000 users, short thinks)
+        env: { LABEL: rate, USERS: '40000', TARGETS: '127.0.0.1,127.0.0.2', THINK: '0.15', RAMP: '20', HOLD: '80', WINDOW: '20', PERF: '15' }
+        run: bash profile/run.sh swift-iouring-akbashev swift-iouring-akbashev-297 rust-iouring-kensac
+      - name: connections (100,000 users)
+        env: { LABEL: conns, USERS: '100000', TARGETS: '127.0.0.1,127.0.0.2,127.0.0.3,127.0.0.4', THINK: '1', RAMP: '60', HOLD: '100', WINDOW: '20', PERF: '15' }
+        run: bash profile/run.sh swift-iouring-akbashev swift-iouring-akbashev-297 rust-iouring-kensac
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: 'profile-${{ matrix.run }}', path: profile/out, retention-days: 7 }
