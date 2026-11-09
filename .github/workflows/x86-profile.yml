@@ -1,5 +1,6 @@
-# Not for upstream: main's code (-drop, #371 as merged at bd715b2) against holds that grow once the WAL is past 64 MiB
-# and the loop's own copy moved to 1 GiB (-wal), two runs each in alternating order, near saturation with the server's disk capped (io.max) at three levels: p99, the
+# Not for upstream: main's code (-drop, #371 as merged at bd715b2), holds that grow once the WAL is past 64 MiB with the
+# loop's own copy moved to 1 GiB (-wal), and the database synced before each hold (-sync: bulk copies until 128 frames
+# are left, fdatasync, one more copy, checkpointer at nice 5, the file grown in 64 MiB chunks), in rotating order, near saturation with the server's disk capped (io.max) at three levels: p99, the
 # checkpoint log lines, the WAL's largest size and the memory peak.
 name: x86 profile
 on:
@@ -14,8 +15,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        disk: [none, medium, tight]
-        run: [1, 2]
+        disk: [medium, tight]
+        run: [1, 2, 3]
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -38,6 +39,7 @@ jobs:
         run: |
           bash submissions/swift-iouring-akbashev-drop/build.sh 2>&1 | tail -2
           bash submissions/swift-iouring-akbashev-wal/build.sh 2>&1 | tail -2
+          bash submissions/swift-iouring-akbashev-sync/build.sh 2>&1 | tail -2
           (cd profile/mload && go build -o mload .)
       - name: near saturation (60,000 users, short thinks), disk ${{ matrix.disk }}
         env: { LABEL: sat, USERS: '60000', TARGETS: '127.0.0.1,127.0.0.2', THINK: '0.15', RAMP: '20', HOLD: '100', WINDOW: '20', PERF: '15' }
@@ -46,12 +48,12 @@ jobs:
             medium) export DISK="wbps=104857600 wiops=3000 rbps=104857600 riops=3000" ;;
             tight) export DISK="wbps=31457280 wiops=1000 rbps=52428800 riops=2000" ;;
           esac
-          # Which goes first alternates between the two runs.
-          if [ "${{ matrix.run }}" = 1 ]; then
-            bash profile/run.sh swift-iouring-akbashev-drop swift-iouring-akbashev-wal
-          else
-            bash profile/run.sh swift-iouring-akbashev-wal swift-iouring-akbashev-drop
-          fi
+          # The order rotates between the three runs.
+          case "${{ matrix.run }}" in
+            1) bash profile/run.sh swift-iouring-akbashev-drop swift-iouring-akbashev-wal swift-iouring-akbashev-sync ;;
+            2) bash profile/run.sh swift-iouring-akbashev-wal swift-iouring-akbashev-sync swift-iouring-akbashev-drop ;;
+            3) bash profile/run.sh swift-iouring-akbashev-sync swift-iouring-akbashev-drop swift-iouring-akbashev-wal ;;
+          esac
       - uses: actions/upload-artifact@v4
         if: always()
         with: { name: 'profile-disk-${{ matrix.disk }}-${{ matrix.run }}', path: profile/out, retention-days: 7 }
