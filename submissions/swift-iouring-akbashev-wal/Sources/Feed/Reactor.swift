@@ -219,12 +219,12 @@ final class Reactor {
         }
     }
 
-    /// How long a hold may last: 250 ms while the WAL is its usual size, longer the further it has grown (the disk is
-    /// keeping the checkpointer behind, and a hold that runs out leaves the WAL to grow), up to 1 s; past
+    /// How long a hold may last: 250 ms until the WAL is past `Store.behindFrames` (the disk is keeping the checkpointer
+    /// behind, and a hold that runs out leaves the WAL to grow), then longer the further it has grown, up to 1 s; past
     /// `Store.overdueFrames`, 2 s, so it does start over. Writes wait; reads, nine requests in ten, go on.
     private static func holdLimitNanos(frames: Int32) -> UInt64 {
         if frames >= Store.overdueFrames { return 2_000_000_000 }
-        let scaled = 250_000_000 * UInt64(max(frames, Store.checkpointFrames)) / UInt64(Store.checkpointFrames)
+        let scaled = 250_000_000 * UInt64(max(frames, Store.behindFrames)) / UInt64(Store.behindFrames)
         return min(scaled, 1_000_000_000)
     }
 

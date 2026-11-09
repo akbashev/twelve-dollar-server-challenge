@@ -42,8 +42,10 @@ nonisolated struct Store: ~Copyable, ~Sendable {
 
     /// Past this many WAL frames (16 MiB) a checkpoint starts (automatic checkpoints are off).
     static let checkpointFrames: Int32 = 4096
-    /// Past this many (256 MiB) the disk is keeping the checkpointer behind: holds last up to 2 s, so the WAL starts over.
-    static let overdueFrames: Int32 = 65536
+    /// Past this many (64 MiB) the disk is keeping the checkpointer behind: holds grow, up to 1 s.
+    static let behindFrames: Int32 = 16_384
+    /// Past this many (256 MiB) holds last up to 2 s, so the WAL starts over.
+    static let overdueFrames: Int32 = 65_536
     /// Past this many (1 GiB), even holds of seconds didn't bring the WAL back: the loop copies it itself.
     static let runawayFrames: Int32 = 262_144
 

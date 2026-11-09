@@ -52,9 +52,9 @@
 - **Checkpoints in two copies; the loop's own write starts the WAL over.** Past 4,096 frames (16 MiB) the
   checkpointer copies the WAL back while writes go on. Then writes wait (a connection with a held write parses
   nothing further, so responses stay in order) and reads go on, while it copies what was written meanwhile; a hold
-  lasts at most 250 ms while the WAL is its usual size, and longer the further it has grown (a slow disk keeps the
-  checkpointer behind, and a hold that runs out leaves the WAL to grow), up to 1 s, and 2 s past 65,536 frames (256
-  MiB). SQLite starts the WAL over only at a write that begins with every frame copied, which group
+  lasts at most 250 ms, until the WAL is past 16,384 frames (64 MiB): then a slow disk is keeping the checkpointer
+  behind, and a hold that runs out leaves the WAL to grow, so holds last longer the further it has grown, up to 1 s,
+  and 2 s past 65,536 frames (256 MiB). SQLite starts the WAL over only at a write that begins with every frame copied, which group
   commit under steady writes never leaves (locally the WAL reached 767 MB in a minute, and the WAL index SQLite keeps
   in memory with it): the pass after the hold reads with the WAL all copied, so its first write starts it over, on
   the loop's own connection. The checkpointer only copies and never commits, since a commit from another connection
