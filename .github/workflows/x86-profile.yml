@@ -11,7 +11,34 @@ permissions:
   contents: read
 
 jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: tools
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq sqlite3 jq curl openssl
+      - name: seed
+        run: bash seed/make-seed.sh
+      - name: install
+        run: sudo bash submissions/swift-iouring-akbashev/install.sh > /tmp/install.log 2>&1 || { tail -20 /tmp/install.log; exit 1; }
+      - name: tests
+        run: |
+          set -o pipefail
+          bash test/run.sh submissions/swift-iouring-akbashev-sync 2>&1 | tail -15
+      - name: B-tree reads against SQL
+        run: |
+          set -o pipefail
+          SUB=swift-iouring-akbashev-sync bash profile/equivalence.sh | tee /tmp/equivalence.txt
+          grep -q 'different: 0' /tmp/equivalence.txt
+      - name: checkpoints under writes from 8 users
+        run: |
+          set -o pipefail
+          SUB=swift-iouring-akbashev-sync bash profile/checkpoints.sh | tee /tmp/checkpoints.txt
+          ls -la /tmp/db 2>/dev/null || true
+
   profile:
+    if: false
     strategy:
       fail-fast: false
       matrix:

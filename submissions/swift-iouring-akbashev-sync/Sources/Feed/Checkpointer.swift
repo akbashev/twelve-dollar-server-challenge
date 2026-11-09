@@ -1,5 +1,5 @@
 // The one effect that leaves the main thread: copying the WAL back into the database file, whose fsync would otherwise
-// stall the loop. An actor on a thread of its own at the lowest priority (nice 19), so on one CPU it runs while the
+// stall the loop. An actor on a thread of its own at a low priority (nice 5), so on one CPU it mostly runs while the
 // loop waits, with a SQLite connection of its own that only copies: it never commits, since a commit from another
 // connection makes SQLite drop the loop connection's page cache. The loop starts a checkpoint without waiting for it,
 // and learns that it finished from an eventfd its ring reads: a completion like any other.
