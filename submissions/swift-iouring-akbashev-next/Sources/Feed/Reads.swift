@@ -187,27 +187,24 @@ nonisolated struct Reads: ~Copyable, ~Sendable {
 
         // Each row's fixed part and two integers take under 112 bytes, and an escaped byte at most 6.
         let bound = 12 + 112 * n + 6 * text.count
-        text.withBytes { t in
-            _ = body.appendSpare(maximum: bound) { spare in
-                var w = JSON.Writer(spare.baseAddress!)
-                w.literal("{\"posts\":[")
-                for i in 0..<n {
-                    if i > 0 { w.byte(0x2C) }
-                    w.literal("{\"id\":")
-                    w.integer(rows[i].id)
-                    w.literal(",\"body\":\"")
-                    w.escaped(t, rows[i].body)
-                    w.literal("\",\"created_at\":\"")
-                    w.escaped(t, rows[i].created)
-                    w.literal("\",\"author\":\"")
-                    w.escaped(t, rows[i].author)
-                    w.literal("\",\"like_count\":")
-                    w.integer(Int64(rows[i].likes))
-                    w.byte(0x7D)
-                }
-                w.literal("]}")
-                return w.count
+        let t = text.span
+        body.append(maximum: bound) { out in
+            out.append("{\"posts\":[")
+            for i in 0..<n {
+                if i > 0 { out.append(0x2C) }
+                out.append("{\"id\":")
+                out.appendDecimal(rows[i].id)
+                out.append(",\"body\":\"")
+                out.appendJSONStringContents(t.extracting(rows[i].body))
+                out.append("\",\"created_at\":\"")
+                out.appendJSONStringContents(t.extracting(rows[i].created))
+                out.append("\",\"author\":\"")
+                out.appendJSONStringContents(t.extracting(rows[i].author))
+                out.append("\",\"like_count\":")
+                out.appendDecimal(Int64(rows[i].likes))
+                out.append(0x7D)
             }
+            out.append("]}")
         }
         return .done
     }
@@ -231,7 +228,7 @@ nonisolated struct Reads: ~Copyable, ~Sendable {
         guard available, openIfNeeded() else { return "no cursors" }
         defer { close() }
         guard likes.first() == .entry else { return "no first likes entry" }
-        guard likes.pageLayoutMatches() else { return "the page layout: " + likes.pageLayoutReport() }
+        if let mismatch = likes.pageLayoutMismatch() { return "the page layout: " + mismatch }
         var bases: [Int64] = [1, 2, 1_000, 123_457, 250_000, 499_990]
         if newest.first() == .entry {
             let entry = newest.record
