@@ -1,5 +1,5 @@
-# Not for upstream: main's code (-drop, #371 as merged at bd715b2), rust-iouring-kensac and mojo-iouring-oh-meh near
-# saturation with the server's disk capped (io.max) at three levels, for how each one's checkpoints keep up: the
+# Not for upstream: main's code (-drop, #371 as merged at bd715b2) against holds that grow with the WAL and the loop's
+# own copy moved to 1 GiB (-wal), near saturation with the server's disk capped (io.max) at three levels: p99, the
 # checkpoint log lines, the WAL's largest size and the memory peak.
 name: x86 profile
 on:
@@ -33,13 +33,10 @@ jobs:
       - name: install
         run: |
           sudo bash submissions/swift-iouring-akbashev/install.sh > /tmp/install-swift.log 2>&1 || { tail -20 /tmp/install-swift.log; exit 1; }
-          sudo bash submissions/rust-iouring-kensac/install.sh > /tmp/install-rust.log 2>&1 || { tail -20 /tmp/install-rust.log; exit 1; }
-          sudo bash submissions/mojo-iouring-oh-meh/install.sh > /tmp/install-mojo.log 2>&1 || { tail -20 /tmp/install-mojo.log; exit 1; }
       - name: build
         run: |
           bash submissions/swift-iouring-akbashev-drop/build.sh 2>&1 | tail -2
-          bash submissions/rust-iouring-kensac/build.sh 2>&1 | tail -2
-          bash submissions/mojo-iouring-oh-meh/build.sh 2>&1 | tail -2
+          bash submissions/swift-iouring-akbashev-wal/build.sh 2>&1 | tail -2
           (cd profile/mload && go build -o mload .)
       - name: near saturation (60,000 users, short thinks), disk ${{ matrix.disk }}
         env: { LABEL: sat, USERS: '60000', TARGETS: '127.0.0.1,127.0.0.2', THINK: '0.15', RAMP: '20', HOLD: '100', WINDOW: '20', PERF: '15' }
@@ -48,7 +45,7 @@ jobs:
             medium) export DISK="wbps=104857600 wiops=3000 rbps=104857600 riops=3000" ;;
             tight) export DISK="wbps=31457280 wiops=1000 rbps=52428800 riops=2000" ;;
           esac
-          bash profile/run.sh swift-iouring-akbashev-drop rust-iouring-kensac mojo-iouring-oh-meh
+          bash profile/run.sh swift-iouring-akbashev-drop swift-iouring-akbashev-wal
       - uses: actions/upload-artifact@v4
         if: always()
         with: { name: 'profile-disk-${{ matrix.disk }}', path: profile/out, retention-days: 7 }
