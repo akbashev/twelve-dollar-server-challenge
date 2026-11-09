@@ -141,9 +141,28 @@ P
   grep -E '^TCP:' $OUT/$tag.mem-hold.txt | sed 's/^/  /'
   echo "-- by DSO"
   sudo perf report -i $OUT/$tag.perf.data --stdio --no-children --sort dso 2>/dev/null | grep -v '^#' | grep -v '^$' | head -8
-  echo "-- by symbol (top 50)"
   sudo perf report -i $OUT/$tag.perf.data --stdio --no-children --sort dso,symbol 2>/dev/null | grep -v '^#' | grep -v '^$' \
-    | head -50 | demangle | cut -c1-170
+    | demangle > $OUT/$tag.symbols.txt
+  echo "-- by symbol (top 40)"
+  head -40 $OUT/$tag.symbols.txt | cut -c1-170
+  # Samples cover the server's user and kernel time alike: a symbol's share of them times the CPU per request is its
+  # time per request.
+  echo "-- user space by symbol, ns per request (top 45)"
+  python3 - $OUT/$tag.symbols.txt "$rps" "$u0" "$s0" "$u1" "$s1" "$t0" "$t1" <<'P'
+import sys, re
+path = sys.argv[1]
+rps, u0, s0, u1, s1, t0, t1 = map(float, sys.argv[2:9])
+ns = ((u1 - u0) + (s1 - s0)) / (t1 - t0) * 1e9 / rps if rps else 0
+rows, user = [], 0.0
+for line in open(path):
+    m = re.match(r'\s*([\d.]+)%\s+(\S+)\s+\[(.)\]\s+(.*)', line)
+    if not m or m.group(2) == '[kernel.kallsyms]': continue
+    pct = float(m.group(1)); user += pct
+    rows.append((pct, m.group(2), m.group(4).strip()))
+print(f"  user space: {user:.1f}% of samples = {user / 100 * ns:.0f} ns/req")
+for pct, dso, sym in rows[:45]:
+    print(f"  {pct / 100 * ns:6.0f}  {dso[:12]:12s} {sym[:130]}")
+P
   sudo rmdir $CG 2>/dev/null
 done
 sudo chmod -R a+r $OUT
