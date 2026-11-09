@@ -19,6 +19,15 @@ if [ "$NOTRACK" = 1 ] && ! sudo iptables -t raw -C OUTPUT -o lo -j NOTRACK 2>/de
   sudo iptables -t raw -I PREROUTING -i lo -j NOTRACK && sudo iptables -t raw -I OUTPUT -o lo -j NOTRACK
 fi
 grep -qw memory /sys/fs/cgroup/cgroup.subtree_control || echo +memory | sudo tee /sys/fs/cgroup/cgroup.subtree_control >/dev/null
+# DISK="wbps=... wiops=..." caps the server's cgroup's I/O (io.max) on the disk under /tmp, for a disk slower than the
+# runner's; the cgroup's dirty pages are written back under the cap too.
+if [ -n "${DISK:-}" ]; then
+  grep -qw io /sys/fs/cgroup/cgroup.subtree_control || echo +io | sudo tee /sys/fs/cgroup/cgroup.subtree_control >/dev/null
+  PART=$(findmnt -n -o SOURCE -T /tmp)
+  PARENT=$(lsblk -no PKNAME "$PART" | head -1)
+  MAJMIN=$(cat /sys/block/${PARENT:-$(basename "$PART")}/dev)
+  echo "disk cap on $PART ($MAJMIN): $DISK"
+fi
 # PACKETS=1: count the packets to and from the server (each leaves through lo's OUTPUT once), all of them and those
 # without data (60 bytes or less: a bare TCP header). On the box each costs the server's one CPU interrupt and protocol
 # work; on loopback the receiving side's runs on the sender's CPU, so the profile alone can't see them.
@@ -50,12 +59,15 @@ for sub in "$@"; do
   run=$((run + 1)); tag="$LABEL-$run-$sub"
   CG=/sys/fs/cgroup/prof-$tag
   sudo mkdir $CG
+  [ -n "${DISK:-}" ] && echo "$MAJMIN $DISK" | sudo tee $CG/io.max > /dev/null
   rm -rf /tmp/db && mkdir /tmp/db && cp seed/feed.db /tmp/db/feed.db
   SQLITE_PATH=/tmp/db/feed.db JWT_SECRET=twelve-dollar-challenge HOST=0.0.0.0 PORT=3000 \
     taskset -c 0 bash -c "echo \$\$ | sudo tee $CG/cgroup.procs >/dev/null && ulimit -n $SERVER_NOFILE && exec bash submissions/$sub/start.sh" \
     > $OUT/$tag.server.log 2>&1 &
   PID=$!
   for _ in $(seq 120); do curl -sf http://127.0.0.1:3000/health >/dev/null && break; sleep 0.5; done
+  # The WAL's size every second.
+  ( while kill -0 $PID 2>/dev/null; do stat -c %s /tmp/db/feed.db-wal 2>/dev/null || echo 0; sleep 1; done ) > $OUT/$tag.wal.txt &
   taskset -c 1-$LAST profile/mload/mload -target $TARGETS -ports 3000 -users $USERS -ramp ${RAMP}s -hold ${HOLD}s \
     -think-scale $THINK -tokens seed/tokens.json > $OUT/$tag.load.log 2>&1 &
   LOAD=$!
@@ -85,6 +97,8 @@ for sub in "$@"; do
   sleep 10
   echo "================ $tag"
   grep RESULT $OUT/$tag.load.log
+  echo "WAL largest $(sort -n $OUT/$tag.wal.txt | tail -1 | awk '{ printf "%.0f MB", $1 / 1048576 }'), memory peak $(awk '/^peak/ { printf "%.0f MB", $2 / 1048576 }' $OUT/$tag.mem-end.txt)"
+  grep -h -i -E 'checkpoint|hold' $OUT/$tag.server.log | grep -v -i 'listening' | tail -4 | sed 's/^/  log: /'
   python3 - "$rps" "$u0" "$s0" "$u1" "$s1" "$t0" "$t1" <<'P'
 import sys
 rps, u0, s0, u1, s1, t0, t1 = map(float, sys.argv[1:8])
