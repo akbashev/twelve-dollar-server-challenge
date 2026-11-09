@@ -19,6 +19,23 @@ if [ "$NOTRACK" = 1 ] && ! sudo iptables -t raw -C OUTPUT -o lo -j NOTRACK 2>/de
   sudo iptables -t raw -I PREROUTING -i lo -j NOTRACK && sudo iptables -t raw -I OUTPUT -o lo -j NOTRACK
 fi
 grep -qw memory /sys/fs/cgroup/cgroup.subtree_control || echo +memory | sudo tee /sys/fs/cgroup/cgroup.subtree_control >/dev/null
+# PACKETS=1: count the packets to and from the server (each leaves through lo's OUTPUT once), all of them and those
+# without data (60 bytes or less: a bare TCP header). On the box each costs the server's one CPU interrupt and protocol
+# work; on loopback the receiving side's runs on the sender's CPU, so the profile alone can't see them.
+if [ "${PACKETS:-0}" = 1 ]; then
+  sudo iptables -t raw -F PROFILE 2>/dev/null || sudo iptables -t raw -N PROFILE
+  for dir in "--sport 3000" "--dport 3000"; do
+    sudo iptables -t raw -A PROFILE -p tcp $dir
+    sudo iptables -t raw -A PROFILE -p tcp $dir -m length --length 0:60
+  done
+  sudo iptables -t raw -C OUTPUT -o lo -j PROFILE 2>/dev/null || sudo iptables -t raw -I OUTPUT 1 -o lo -j PROFILE
+fi
+# LO_MTU=1500: loopback with the box's MTU and no segmentation offload, so a response leaves as wire-sized packets
+# and the client acknowledges them as it would over the network.
+if [ -n "${LO_MTU:-}" ]; then
+  sudo ip link set lo mtu $LO_MTU && sudo ethtool -K lo tso off gso off 2>/dev/null
+  ip link show lo | head -1; ethtool -k lo 2>/dev/null | grep -E '^(tcp-segmentation|generic-segmentation)-offload'
+fi
 LIBC=$(ldconfig -p | awk '/libc\.so\.6 .*x86-64/ { print $NF; exit }')
 sudo perf probe -q -x "$LIBC" -a malloc -a calloc -a realloc -a posix_memalign -a aligned_alloc 2>/dev/null
 ALLOCS=probe_libc:malloc,probe_libc:calloc,probe_libc:realloc,probe_libc:posix_memalign,probe_libc:aligned_alloc
@@ -44,9 +61,11 @@ for sub in "$@"; do
   LOAD=$!
   sleep $((RAMP + 10))
   # CPU per request over the window.
+  [ "${PACKETS:-0}" = 1 ] && sudo iptables -t raw -Z PROFILE
   read u0 s0 < <(cputime $PID); t0=$(date +%s.%N); w0=$(grep -c '^t=' $OUT/$tag.load.log)
   sleep $WINDOW
   read u1 s1 < <(cputime $PID); t1=$(date +%s.%N); w1=$(grep -c '^t=' $OUT/$tag.load.log)
+  [ "${PACKETS:-0}" = 1 ] && sudo iptables -t raw -L PROFILE -v -x -n > $OUT/$tag.packets.txt
   rps=$(rate $OUT/$tag.load.log $w0 $w1)
   { cat $CG/memory.stat; echo "current $(cat $CG/memory.current)"; grep -E '^(VmRSS|VmHWM|RssAnon|RssFile|RssShmem|Threads)' /proc/$PID/status
     cat /proc/net/sockstat; } > $OUT/$tag.mem-hold.txt
@@ -77,6 +96,27 @@ print(f"window {secs:.0f}s: {rps:.0f} req/s; server {100 * (user + system):.0f}%
       f"({per(user):.1f} user + {per(system):.1f} kernel)")
 P
   grep -E 'task-clock|context-switches|cycles|instructions|branch-misses|cache-misses|not supported' $OUT/$tag.stat.txt | sed 's/^ */  /'
+  if [ -f $OUT/$tag.packets.txt ]; then
+    echo "-- packets per request over the window"
+    python3 - $OUT/$tag.packets.txt "$rps" "$t0" "$t1" <<'P'
+import sys
+path, rps, t0, t1 = sys.argv[1], float(sys.argv[2]), float(sys.argv[3]), float(sys.argv[4])
+requests = rps * (t1 - t0)
+counts = {}
+for line in open(path):
+    f = line.split()
+    if len(f) < 3 or not f[0].isdigit(): continue
+    direction = "server -> client" if "spt:3000" in line else "client -> server"
+    kind = "bare" if "length 0:60" in line else "all"
+    counts[(direction, kind)] = (int(f[0]), int(f[1]))
+for direction in ["server -> client", "client -> server"]:
+    packets, octets = counts.get((direction, "all"), (0, 0))
+    bare, _ = counts.get((direction, "bare"), (0, 0))
+    if requests:
+        print(f"  {direction}: {packets / requests:.3f} packets/req ({(packets - bare) / requests:.3f} with data, "
+              f"{bare / requests:.3f} bare), {octets / requests:.0f} bytes/req")
+P
+  fi
   echo "-- allocations (5 s at $arps req/s)"
   awk -F, -v r="$arps" '$3 ~ /probe_libc/ { n = $1 + 0; t += n; printf "  %-28s %9d  %.3f/req\n", $3, n, r ? n / (5 * r) : 0 }
     END { printf "  %-28s %9d  %.3f/req\n", "total", t, r ? t / (5 * r) : 0 }' $OUT/$tag.allocs.txt

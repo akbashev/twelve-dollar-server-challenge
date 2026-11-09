@@ -39,11 +39,11 @@ jobs:
           bash submissions/swift-iouring-akbashev-297/build.sh 2>&1 | tail -3
           bash submissions/rust-iouring-kensac/build.sh 2>&1 | tail -3
           (cd profile/mload && go build -o mload .)
-      - name: rate (40,000 users, short thinks)
-        env: { LABEL: rate, USERS: '40000', TARGETS: '127.0.0.1,127.0.0.2', THINK: '0.15', RAMP: '20', HOLD: '80', WINDOW: '20', PERF: '15' }
+      - name: packets (40,000 users, loopback as it is)
+        env: { LABEL: lo64k, PACKETS: '1', USERS: '40000', TARGETS: '127.0.0.1,127.0.0.2', THINK: '0.15', RAMP: '20', HOLD: '80', WINDOW: '20', PERF: '15' }
         run: bash profile/run.sh swift-iouring-akbashev swift-iouring-akbashev-297 rust-iouring-kensac
-      - name: connections (100,000 users)
-        env: { LABEL: conns, USERS: '100000', TARGETS: '127.0.0.1,127.0.0.2,127.0.0.3,127.0.0.4', THINK: '1', RAMP: '60', HOLD: '100', WINDOW: '20', PERF: '15' }
+      - name: packets (40,000 users, MTU 1500 and no segmentation offload, as on a network)
+        env: { LABEL: mtu1500, PACKETS: '1', LO_MTU: '1500', USERS: '40000', TARGETS: '127.0.0.1,127.0.0.2', THINK: '0.15', RAMP: '20', HOLD: '80', WINDOW: '20', PERF: '15' }
         run: bash profile/run.sh swift-iouring-akbashev swift-iouring-akbashev-297 rust-iouring-kensac
       - uses: actions/upload-artifact@v4
         if: always()
