@@ -18,8 +18,8 @@ struct Feed {
         let files = UInt32(envInt("RING_FILES", min(nofile, 1 << 20)))
         let settings = Reactor.Settings(
             files: files, margin: min(1024, Int(files) / 8), maxRings: envInt("MAX_RINGS", 16),
-            queueDepth: 4096, bufferCount: UInt32(envInt("RING_BUFFERS", 4096)), bufferSize: 2048,
-            batch: UInt32(envInt("PASS_BATCH", 64)), windowNanos: Int64(envInt("PASS_WINDOW_US", 1000)) * 1000,
+            queueDepth: 4096, bufferCount: UInt32(envInt("RING_BUFFERS", 1024)), bufferSize: 2048,
+            batch: UInt32(envInt("PASS_BATCH", 256)), windowNanos: Int64(envInt("PASS_WINDOW_US", 1000)) * 1000,
             directReads: envInt("BTREE_READS", 1) != 0)
 
         // Checkpoints off the main thread (an actor of their own), or in the loop with CHECKPOINT_THREAD=0.
@@ -34,7 +34,8 @@ struct Feed {
             fatalError("\(error)")
         }
         Sys.logLine("listening on \(host):\(port): io_uring, \(files) connections per ring, pass of \(settings.batch) "
-            + "completions or \(settings.windowNanos / 1000) us, reads \(reactor.directReads ? "off the B-trees" : "through SQL")")
+            + "completions or \(settings.windowNanos / 1000) us, reads \(reactor.directReads ? "off the B-trees" : "through SQL")"
+            + (reactor.pageReads ? ", like counts off the leaf pages" : ""))
         reactor.run()
     }
 }

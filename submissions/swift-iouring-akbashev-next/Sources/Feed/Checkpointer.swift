@@ -1,7 +1,8 @@
 // The one effect that leaves the main thread: copying the WAL back into the database file, whose fsync would otherwise
 // stall the loop. An actor on a thread of its own at the lowest priority (nice 19), so on one CPU it runs while the
-// loop waits, with a SQLite connection of its own. The loop starts a checkpoint without waiting for it, and learns that
-// it finished from an eventfd its ring reads: a completion like any other.
+// loop waits, with a SQLite connection of its own that only copies: it never commits, since a commit from another
+// connection makes SQLite drop the loop connection's page cache. The loop starts a checkpoint without waiting for it,
+// and learns that it finished from an eventfd its ring reads: a completion like any other.
 import CSQLite
 import Glibc
 import Synchronization
@@ -12,8 +13,9 @@ actor Checkpointer {
     nonisolated var unownedExecutor: UnownedSerialExecutor { executor.asUnownedSerialExecutor() }
 
     private let db: OpaquePointer
-    /// Written when a checkpoint is done.
+    /// Written when a checkpoint is done: `copiedAll`, or 1 if frames are left.
     private let done: Int32
+    static let copiedAll: UInt64 = 2
 
     init(path: String, done: Int32) throws(StoreError) {
         db = try SQLite.open(path, cacheKiB: 8 * 1024)
@@ -23,9 +25,11 @@ actor Checkpointer {
 
     /// A PASSIVE checkpoint: it copies what no reader still needs and never waits for the loop's transaction.
     func checkpoint() {
-        sqlite3_wal_checkpoint_v2(db, nil, SQLITE_CHECKPOINT_PASSIVE, nil, nil)
-        var one: UInt64 = 1
-        _ = sys_write(done, &one, 8)
+        var logged: Int32 = -1
+        var copied: Int32 = -2
+        let rc = sqlite3_wal_checkpoint_v2(db, nil, SQLITE_CHECKPOINT_PASSIVE, &logged, &copied)
+        var result: UInt64 = rc == SQLITE_OK && logged == copied ? Self.copiedAll : 1
+        _ = sys_write(done, &result, 8)
     }
 }
 

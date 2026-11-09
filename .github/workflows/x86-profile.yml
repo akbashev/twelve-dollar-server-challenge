@@ -1,5 +1,6 @@
-# Not for upstream: swift-iouring-akbashev (now, and as #297 had it) against rust-iouring-kensac on x86 runners, each
-# on one CPU in its own cgroup under the same mload load: CPU per request, perf by function, allocations, memory.
+# Not for upstream: swift-iouring-akbashev as merged (#361) and with the next changes (-next), against
+# rust-iouring-kensac on x86 runners, each on one CPU in its own cgroup under the same mload load: CPU per request,
+# perf by function, allocations, packets, memory. One job per scenario and run.
 name: x86 profile
 on:
   push:
@@ -13,9 +14,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        scenario: [rate, conns]
         run: [1, 2]
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -35,19 +37,18 @@ jobs:
           sudo bash submissions/rust-iouring-kensac/install.sh > /tmp/install-rust.log 2>&1 || { tail -20 /tmp/install-rust.log; exit 1; }
       - name: build
         run: |
-          bash submissions/swift-iouring-akbashev/build.sh 2>&1 | tail -3
-          bash submissions/swift-iouring-akbashev-297/build.sh 2>&1 | tail -3
-          bash submissions/rust-iouring-kensac/build.sh 2>&1 | tail -3
+          bash submissions/swift-iouring-akbashev/build.sh 2>&1 | tail -2
+          bash submissions/swift-iouring-akbashev-next/build.sh 2>&1 | tail -2
+          bash submissions/rust-iouring-kensac/build.sh 2>&1 | tail -2
           (cd profile/mload && go build -o mload .)
-      - name: packets (40,000 users, loopback as it is)
-        env: { LABEL: lo64k, PACKETS: '1', USERS: '40000', TARGETS: '127.0.0.1,127.0.0.2', THINK: '0.15', RAMP: '20', HOLD: '80', WINDOW: '20', PERF: '15' }
-        run: bash profile/run.sh swift-iouring-akbashev swift-iouring-akbashev-297 rust-iouring-kensac
+      - name: rate (40,000 users, short thinks)
+        if: matrix.scenario == 'rate'
+        env: { LABEL: rate, PACKETS: '1', USERS: '40000', TARGETS: '127.0.0.1,127.0.0.2', THINK: '0.15', RAMP: '20', HOLD: '80', WINDOW: '20', PERF: '15' }
+        run: bash profile/run.sh swift-iouring-akbashev swift-iouring-akbashev-next rust-iouring-kensac
       - name: connections (100,000 users)
+        if: matrix.scenario == 'conns'
         env: { LABEL: conns, PACKETS: '1', USERS: '100000', TARGETS: '127.0.0.1,127.0.0.2,127.0.0.3,127.0.0.4', THINK: '1', RAMP: '60', HOLD: '100', WINDOW: '20', PERF: '15' }
-        run: bash profile/run.sh swift-iouring-akbashev rust-iouring-kensac swift-iouring-akbashev rust-iouring-kensac
-      - name: packets (40,000 users, MTU 1500 and no segmentation offload, as on a network)
-        env: { LABEL: mtu1500, PACKETS: '1', LO_MTU: '1500', USERS: '40000', TARGETS: '127.0.0.1,127.0.0.2', THINK: '0.15', RAMP: '20', HOLD: '80', WINDOW: '20', PERF: '15' }
-        run: bash profile/run.sh swift-iouring-akbashev swift-iouring-akbashev-297 rust-iouring-kensac
+        run: bash profile/run.sh swift-iouring-akbashev swift-iouring-akbashev-next rust-iouring-kensac
       - uses: actions/upload-artifact@v4
         if: always()
-        with: { name: 'profile-${{ matrix.run }}', path: profile/out, retention-days: 7 }
+        with: { name: 'profile-${{ matrix.scenario }}-${{ matrix.run }}', path: profile/out, retention-days: 7 }
