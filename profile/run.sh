@@ -60,6 +60,8 @@ for sub in "$@"; do
   CG=/sys/fs/cgroup/prof-$tag
   sudo mkdir $CG
   [ -n "${DISK:-}" ] && echo "$MAJMIN $DISK" | sudo tee $CG/io.max > /dev/null
+  # MEMMAX caps the server's cgroup (page cache and kernel memory included), as the box's 2 GB does at its user count.
+  [ -n "${MEMMAX:-}" ] && echo "$MEMMAX" | sudo tee $CG/memory.max > /dev/null && echo 0 | sudo tee $CG/memory.swap.max > /dev/null
   rm -rf /tmp/db && mkdir /tmp/db && cp seed/feed.db /tmp/db/feed.db
   SQLITE_PATH=/tmp/db/feed.db JWT_SECRET=twelve-dollar-challenge HOST=0.0.0.0 PORT=3000 \
     taskset -c 0 bash -c "echo \$\$ | sudo tee $CG/cgroup.procs >/dev/null && ulimit -n $SERVER_NOFILE && exec bash submissions/$sub/start.sh" \
@@ -99,6 +101,7 @@ for sub in "$@"; do
   grep RESULT $OUT/$tag.load.log
   echo "WAL largest $(sort -n $OUT/$tag.wal.txt | tail -1 | awk '{ printf "%.0f MB", $1 / 1048576 }'), memory peak $(awk '/^peak/ { printf "%.0f MB", $2 / 1048576 }' $OUT/$tag.mem-end.txt)"
   grep -h -i -E 'checkpoint|hold' $OUT/$tag.server.log | grep -v -i 'listening' | tail -4 | sed 's/^/  log: /'
+  echo "memory cap ${MEMMAX:-none}: $(awk '/^(pgmajfault|pgscan|pgsteal|workingset_refault_file|workingset_refault_anon) / { printf "%s %s  ", $1, $2 }' $OUT/$tag.mem-end.txt)oom $(sudo cat $CG/memory.events 2>/dev/null | awk '/^oom_kill/ { print $2 }')"
   python3 - "$rps" "$u0" "$s0" "$u1" "$s1" "$t0" "$t1" <<'P'
 import sys
 rps, u0, s0, u1, s1, t0, t1 = map(float, sys.argv[1:8])
