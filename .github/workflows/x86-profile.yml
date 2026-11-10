@@ -1,7 +1,6 @@
-# Not for upstream: main's code (#376) against rust-iouring-kensac and mojo-iouring-oh-meh on ubuntu-22.04 runners,
-# for an older kernel than 24.04 runners' 7.0 (the box runs Ubuntu 24.04's 6.8), and on Intel only (the box is Intel):
-# twenty tries, only Intel ones run the load. CPU per request, by symbol, user and kernel, each on one CPU in its own
-# cgroup under the same mload load, in rotating order.
+# Not for upstream: main (#376) against the lean follow-up (-lean: the feed off the posts table's tail, only the headers
+# the server reads checked, the head's room not zeroed). -lean through the tests, against SQL's answers, the feed plan's
+# fallbacks and checkpoint cycles; then CPU per request against main, three jobs in rotating order.
 name: x86 profile
 on:
   push:
@@ -11,59 +10,66 @@ permissions:
   contents: read
 
 jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: tools
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq sqlite3 jq curl openssl
+      - name: seed
+        run: bash seed/make-seed.sh
+      - name: install
+        run: sudo bash submissions/swift-iouring-akbashev/install.sh > /tmp/install.log 2>&1 || { tail -20 /tmp/install.log; exit 1; }
+      - name: tests
+        run: |
+          set -o pipefail
+          bash test/run.sh submissions/swift-iouring-akbashev-lean 2>&1 | tail -15
+      - name: B-tree reads against SQL
+        run: |
+          set -o pipefail
+          SUB=swift-iouring-akbashev-lean bash profile/equivalence.sh | tee /tmp/equivalence.txt
+          grep -q 'different: 0' /tmp/equivalence.txt
+      - name: feed plan fallbacks against SQL
+        run: SUB=swift-iouring-akbashev-lean bash profile/tailcheck.sh
+      - name: checkpoints under writes from 8 users
+        run: SUB=swift-iouring-akbashev-lean bash profile/checkpoints.sh
+
   profile:
     strategy:
       fail-fast: false
       matrix:
-        run: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
-    runs-on: ubuntu-22.04
+        run: [1, 2, 3]
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
-      - name: the CPU
-        id: cpu
-        run: |
-          model=$(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2- | xargs)
-          echo "$model"; nproc; uname -r
-          if echo "$model" | grep -qi intel; then echo "intel=true" >> "$GITHUB_OUTPUT"; else echo "not Intel: no load run"; fi
       - uses: actions/checkout@v4
-        if: steps.cpu.outputs.intel == 'true'
       - uses: actions/setup-go@v5
-        if: steps.cpu.outputs.intel == 'true'
         with: { go-version: '1.27.1', cache: false }
+      - name: machine
+        run: lscpu | grep -E 'Model name|^CPU\(s\)' | cut -c1-200; uname -r
       - name: tools
-        if: steps.cpu.outputs.intel == 'true'
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq sqlite3 jq curl openssl linux-tools-common "linux-tools-$(uname -r)" \
             || sudo apt-get install -y -qq linux-tools-generic
-          grep -o -w -E 'avx2|avx512f|sha_ni|bmi2' /proc/cpuinfo | sort -u | xargs
       - name: seed
-        if: steps.cpu.outputs.intel == 'true'
         run: bash seed/make-seed.sh
       - name: install
-        if: steps.cpu.outputs.intel == 'true'
-        run: |
-          # The entry's install.sh is for 24.04; this one takes 22.04 (same Swift 6.4.2, into /opt/swift).
-          sudo SWIFT_VERSION=6.4.2 bash profile/install-swift.sh > /tmp/install-swift.log 2>&1 || { tail -20 /tmp/install-swift.log; exit 1; }
-          sudo bash submissions/rust-iouring-kensac/install.sh > /tmp/install-rust.log 2>&1 || { tail -20 /tmp/install-rust.log; exit 1; }
-          sudo bash submissions/mojo-iouring-oh-meh/install.sh > /tmp/install-mojo.log 2>&1 || { tail -20 /tmp/install-mojo.log; exit 1; }
+        run: sudo bash submissions/swift-iouring-akbashev/install.sh > /tmp/install-swift.log 2>&1 || { tail -20 /tmp/install-swift.log; exit 1; }
       - name: build
-        if: steps.cpu.outputs.intel == 'true'
         run: |
           bash submissions/swift-iouring-akbashev-main/build.sh 2>&1 | tail -2
-          bash submissions/rust-iouring-kensac/build.sh 2>&1 | tail -2
-          bash submissions/mojo-iouring-oh-meh/build.sh 2>&1 | tail -2
+          bash submissions/swift-iouring-akbashev-lean/build.sh 2>&1 | tail -2
           (cd profile/mload && go build -o mload .)
       - name: rate (40,000 users, short thinks)
-        if: steps.cpu.outputs.intel == 'true'
         env: { LABEL: rate, USERS: '40000', TARGETS: '127.0.0.1,127.0.0.2', THINK: '0.15', RAMP: '20', HOLD: '80', WINDOW: '20', PERF: '15' }
         run: |
-          # The order rotates between runs.
-          case $(( ${{ matrix.run }} % 3 )) in
-            1) bash profile/run.sh swift-iouring-akbashev-main rust-iouring-kensac mojo-iouring-oh-meh ;;
-            2) bash profile/run.sh rust-iouring-kensac mojo-iouring-oh-meh swift-iouring-akbashev-main ;;
-            0) bash profile/run.sh mojo-iouring-oh-meh swift-iouring-akbashev-main rust-iouring-kensac ;;
-          esac
+          if [ $((${{ matrix.run }} % 2)) = 1 ]; then
+            bash profile/run.sh swift-iouring-akbashev-main swift-iouring-akbashev-lean
+          else
+            bash profile/run.sh swift-iouring-akbashev-lean swift-iouring-akbashev-main
+          fi
       - uses: actions/upload-artifact@v4
-        if: always() && steps.cpu.outputs.intel == 'true'
-        with: { name: 'profile-intel-${{ matrix.run }}', path: profile/out, retention-days: 7 }
+        if: always()
+        with: { name: 'profile-lean-${{ matrix.run }}', path: profile/out, retention-days: 7 }
