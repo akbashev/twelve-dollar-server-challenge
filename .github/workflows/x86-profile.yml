@@ -1,6 +1,7 @@
 # Not for upstream: main's code (#376) against rust-iouring-kensac and mojo-iouring-oh-meh on ubuntu-22.04 runners,
-# for an older kernel than 24.04 runners' 7.0 (the box runs Ubuntu 24.04's 6.8). CPU per request, by symbol, user and
-# kernel, each on one CPU in its own cgroup under the same mload load; three jobs in rotating order.
+# for an older kernel than 24.04 runners' 7.0 (the box runs Ubuntu 24.04's 6.8), and on Intel only (the box is Intel):
+# twenty tries, only Intel ones run the load. CPU per request, by symbol, user and kernel, each on one CPU in its own
+# cgroup under the same mload load, in rotating order.
 name: x86 profile
 on:
   push:
@@ -14,7 +15,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        run: [1, 2, 3]
+        run: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
     runs-on: ubuntu-22.04
     timeout-minutes: 60
     steps:
@@ -23,7 +24,7 @@ jobs:
         run: |
           model=$(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2- | xargs)
           echo "$model"; nproc; uname -r
-          echo "intel=true" >> "$GITHUB_OUTPUT"   # every CPU runs the load here; the kernel is what's compared
+          if echo "$model" | grep -qi intel; then echo "intel=true" >> "$GITHUB_OUTPUT"; else echo "not Intel: no load run"; fi
       - uses: actions/checkout@v4
         if: steps.cpu.outputs.intel == 'true'
       - uses: actions/setup-go@v5
