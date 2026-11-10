@@ -1,5 +1,5 @@
 # Not for upstream: main's code (#376) against rust-iouring-kensac and mojo-iouring-oh-meh on Intel runners only (the
-# box is Intel; GitHub's runners are mostly AMD): eight jobs, each checks its CPU and only Intel ones run the load. CPU
+# box is Intel; GitHub's runners are mostly AMD): twenty jobs, each checks its CPU and only Intel ones run the load. CPU
 # per request, by symbol, user and kernel, each on one CPU in its own cgroup under the same mload load.
 name: x86 profile
 on:
@@ -14,7 +14,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        run: [1, 2, 3, 4, 5, 6, 7, 8]
+        run: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
