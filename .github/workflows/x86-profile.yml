@@ -1,7 +1,6 @@
-# Not for upstream: main's code (-drop, #371 as merged at bd715b2), holds that grow once the WAL is past 64 MiB with the
-# loop's own copy moved to 1 GiB (-wal), and the database synced before each hold (-sync: bulk copies until 128 frames
-# are left, fdatasync, one more copy, checkpointer at nice 5, the file grown in 64 MiB chunks), in rotating order, near saturation with the server's disk capped (io.max) at three levels: p99, the
-# checkpoint log lines, the WAL's largest size and the memory peak.
+# Not for upstream: main's code (#376) against rust-iouring-kensac and mojo-iouring-oh-meh on Intel runners only (the
+# box is Intel; GitHub's runners are mostly AMD): eight jobs, each checks its CPU and only Intel ones run the load. CPU
+# per request, by symbol, user and kernel, each on one CPU in its own cgroup under the same mload load.
 name: x86 profile
 on:
   push:
@@ -11,76 +10,58 @@ permissions:
   contents: read
 
 jobs:
-  check:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 40
-    steps:
-      - uses: actions/checkout@v4
-      - name: tools
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq sqlite3 jq curl openssl
-      - name: seed
-        run: bash seed/make-seed.sh
-      - name: install
-        run: sudo bash submissions/swift-iouring-akbashev/install.sh > /tmp/install.log 2>&1 || { tail -20 /tmp/install.log; exit 1; }
-      - name: tests
-        run: |
-          set -o pipefail
-          bash test/run.sh submissions/swift-iouring-akbashev-sync 2>&1 | tail -15
-      - name: B-tree reads against SQL
-        run: |
-          set -o pipefail
-          SUB=swift-iouring-akbashev-sync bash profile/equivalence.sh | tee /tmp/equivalence.txt
-          grep -q 'different: 0' /tmp/equivalence.txt
-      - name: checkpoints under writes from 8 users
-        run: |
-          set -o pipefail
-          SUB=swift-iouring-akbashev-sync bash profile/checkpoints.sh | tee /tmp/checkpoints.txt
-          ls -la /tmp/db 2>/dev/null || true
-
   profile:
-    if: false
     strategy:
       fail-fast: false
       matrix:
-        disk: [medium, tight]
-        run: [1, 2, 3]
+        run: [1, 2, 3, 4, 5, 6, 7, 8]
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
+      - name: the CPU
+        id: cpu
+        run: |
+          model=$(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2- | xargs)
+          echo "$model"; nproc; uname -r
+          if echo "$model" | grep -qi intel; then echo "intel=true" >> "$GITHUB_OUTPUT"; else echo "not Intel: no load run"; fi
       - uses: actions/checkout@v4
+        if: steps.cpu.outputs.intel == 'true'
       - uses: actions/setup-go@v5
+        if: steps.cpu.outputs.intel == 'true'
         with: { go-version: '1.27.1', cache: false }
-      - name: machine
-        run: lscpu | grep -E 'Model name|^CPU\(s\)' | cut -c1-200; uname -r; free -m; findmnt -T /tmp; lsblk
       - name: tools
+        if: steps.cpu.outputs.intel == 'true'
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq sqlite3 jq curl openssl linux-tools-common "linux-tools-$(uname -r)" \
             || sudo apt-get install -y -qq linux-tools-generic
+          grep -o -w -E 'avx2|avx512f|sha_ni|bmi2' /proc/cpuinfo | sort -u | xargs
       - name: seed
+        if: steps.cpu.outputs.intel == 'true'
         run: bash seed/make-seed.sh
       - name: install
+        if: steps.cpu.outputs.intel == 'true'
         run: |
           sudo bash submissions/swift-iouring-akbashev/install.sh > /tmp/install-swift.log 2>&1 || { tail -20 /tmp/install-swift.log; exit 1; }
+          sudo bash submissions/rust-iouring-kensac/install.sh > /tmp/install-rust.log 2>&1 || { tail -20 /tmp/install-rust.log; exit 1; }
+          sudo bash submissions/mojo-iouring-oh-meh/install.sh > /tmp/install-mojo.log 2>&1 || { tail -20 /tmp/install-mojo.log; exit 1; }
       - name: build
+        if: steps.cpu.outputs.intel == 'true'
         run: |
-          bash submissions/swift-iouring-akbashev-drop/build.sh 2>&1 | tail -2
-          bash submissions/swift-iouring-akbashev-wal/build.sh 2>&1 | tail -2
-          bash submissions/swift-iouring-akbashev-sync/build.sh 2>&1 | tail -2
+          bash submissions/swift-iouring-akbashev-main/build.sh 2>&1 | tail -2
+          bash submissions/rust-iouring-kensac/build.sh 2>&1 | tail -2
+          bash submissions/mojo-iouring-oh-meh/build.sh 2>&1 | tail -2
           (cd profile/mload && go build -o mload .)
-      - name: near saturation (60,000 users, short thinks), disk ${{ matrix.disk }}
-        env: { LABEL: sat, USERS: '60000', TARGETS: '127.0.0.1,127.0.0.2', THINK: '0.15', RAMP: '20', HOLD: '100', WINDOW: '20', PERF: '15' }
+      - name: rate (40,000 users, short thinks)
+        if: steps.cpu.outputs.intel == 'true'
+        env: { LABEL: rate, USERS: '40000', TARGETS: '127.0.0.1,127.0.0.2', THINK: '0.15', RAMP: '20', HOLD: '80', WINDOW: '20', PERF: '15' }
         run: |
-          case "${{ matrix.disk }}" in
-            medium) export DISK="wbps=104857600 wiops=3000 rbps=104857600 riops=3000" ;;
-            tight) export DISK="wbps=31457280 wiops=1000 rbps=52428800 riops=2000" ;;
-          esac
-          # The order rotates between the three runs.
-          case "${{ matrix.run }}" in
-            1) bash profile/run.sh swift-iouring-akbashev-drop swift-iouring-akbashev-wal swift-iouring-akbashev-sync ;;
-            2) bash profile/run.sh swift-iouring-akbashev-wal swift-iouring-akbashev-sync swift-iouring-akbashev-drop ;;
-            3) bash profile/run.sh swift-iouring-akbashev-sync swift-iouring-akbashev-drop swift-iouring-akbashev-wal ;;
+          # The order rotates between runs.
+          case $(( ${{ matrix.run }} % 3 )) in
+            1) bash profile/run.sh swift-iouring-akbashev-main rust-iouring-kensac mojo-iouring-oh-meh ;;
+            2) bash profile/run.sh rust-iouring-kensac mojo-iouring-oh-meh swift-iouring-akbashev-main ;;
+            0) bash profile/run.sh mojo-iouring-oh-meh swift-iouring-akbashev-main rust-iouring-kensac ;;
           esac
       - uses: actions/upload-artifact@v4
-        if: always()
-        with: { name: 'profile-disk-${{ matrix.disk }}-${{ matrix.run }}', path: profile/out, retention-days: 7 }
+        if: always() && steps.cpu.outputs.intel == 'true'
+        with: { name: 'profile-intel-${{ matrix.run }}', path: profile/out, retention-days: 7 }
